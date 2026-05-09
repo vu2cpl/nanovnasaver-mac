@@ -42,6 +42,10 @@ App runs natively on Apple Silicon (no Rosetta).
 - [ ] Proper Developer ID codesigning + notarization, so the `xattr` quarantine workaround is no longer needed.
 - [ ] CI: GitHub Actions on `macos-14` (arm64) and `macos-13` (Intel) runners to auto-build on tag push.
 
+## License
+
+Licensed under the [GNU General Public License v3.0 or later](LICENSE) (GPL-3.0-or-later), matching the [upstream NanoVNA-Saver license](https://github.com/NanoVNA-Saver/nanovna-saver/blob/main/licenses/LICENSE.txt). The bundled `.app` redistributes the upstream Python source and PySide6 (LGPL-3.0); both are compatible with GPL-3.0.
+
 ## Why each fix is needed
 
 These are upstream quirks that make a vanilla `pip install` non-functional on macOS:

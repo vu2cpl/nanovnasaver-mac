@@ -7,6 +7,10 @@
 #
 # Usage:  ./build.sh [version-tag] [destination]
 # e.g.:   ./build.sh v0.7.3 ~/Applications/NanoVNASaver.app
+#
+# Copyright (C) 2026 Manoj Kumar R <vu2cpl@gmail.com>
+# SPDX-License-Identifier: GPL-3.0-or-later
+# See LICENSE for the full text of the GNU General Public License v3.
 
 set -euo pipefail
 
