@@ -14,6 +14,7 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TAG="${1:-v0.7.3}"
 APP="${2:-$HOME/Applications/NanoVNASaver.app}"
 PYTHON="${PYTHON:-/opt/homebrew/bin/python3.12}"
@@ -62,6 +63,46 @@ cp "$UI_SRC/icon_48x48.png" "$UI_SRC/logo_128x128.png" "$UI_DST/"
 # 5. Fix broken `import main_rc` in generated about.py
 sed -i '' 's/^import main_rc$/from . import main_rc/' "$UI_DST/about.py"
 
+# 5b. macOS UI fixes — upstream hard-codes control sizes (setFixedHeight(20),
+#     setFixedWidth(60)) tuned for Windows/Linux. On macOS the native control
+#     chrome (taller fields, focus-ring margins, larger system font) needs more
+#     room, so Qt clips text: "50kHz"->"50kH", "Sweep"->"Sweer", "Rescan"->"Rescar".
+#     Relax the fixed sizes to minimums and widen the control column slightly.
+echo "==> Applying macOS UI sizing fixes"
+PKG="$APP/Contents/Resources/venv/lib/python3.12/site-packages/NanoVNASaver"
+# Let controls grow to their natural macOS height instead of clipping at 20px
+sed -i '' 's/setFixedHeight(20)/setMinimumHeight(24)/g' \
+    "$PKG/Controls/SweepControl.py" "$PKG/Controls/MarkerControl.py"
+# Frequency input fields: 60px min is too narrow for values like "1.000GHz"
+sed -i '' 's/self.setMinimumWidth(60)/self.setMinimumWidth(80)/' \
+    "$PKG/Controls/SweepControl.py"
+sed -i '' 's/setMinimumHeight(20)/setMinimumHeight(24)/g' "$PKG/Marker/Widget.py"
+# Rescan/Manage buttons: 60px fixed width clips the label text
+sed -i '' 's/setFixedWidth(60)/setMinimumWidth(72)/g' "$PKG/Controls/SerialControl.py"
+# Widen the left control column so the two-column Start/Stop|Center/Span forms
+# fit without clipping labels (macOS fonts are wider, and the 80px freq fields +
+# divider leave too little room for the "Center" label at 280px).
+sed -i '' 's/self.setMaximumWidth(250)/self.setMaximumWidth(300)/' \
+    "$PKG/Controls/Control.py"
+# Marker readout boxes have no trailing stretch, so a taller window inflates the
+# three Marker boxes to fill the column instead of keeping them compact. Add a
+# stretch after the markers so the slack collects below them and the boxes stay
+# at their natural height (upstream left this as a commented-out TODO).
+perl -i -pe 's/^(        scroll2 = QtWidgets\.QScrollArea\(\))$/        self.marker_data_layout.addStretch(1)\n$1/' \
+    "$PKG/NanoVNASaver.py"
+# The S11/S21 summary boxes have no width cap, so they stretch horizontally to
+# fill the column when the window is resized. The Marker group boxes cap their
+# width at 340*scale_factor (Marker/Widget.py setScale) — give S11/S21 the same
+# cap so their width stays fixed on resize and matches the markers exactly.
+# scale_factor is already set by this point (the DisplaySettings window triggers
+# changeFont during __init__, before these boxes are built) and has a safe
+# class-level default of 1.0, so this can't raise.
+perl -i -pe 's/^(        (s11|s21)_control_box\.setTitle\("S\d+"\))$/$1\n        $2_control_box.setMaximumWidth(int(340 * self.scale_factor))/' \
+    "$PKG/NanoVNASaver.py"
+# Same width cap for the "Analysis ..." button so it doesn't stretch on resize.
+perl -i -pe 's/^(        btn_show_analysis = QtWidgets\.QPushButton\("Analysis \.\.\."\))$/$1\n        btn_show_analysis.setMaximumWidth(int(340 * self.scale_factor))/' \
+    "$PKG/NanoVNASaver.py"
+
 # 6. Build launcher
 cat > "$APP/Contents/MacOS/NanoVNASaver" <<'EOF'
 #!/bin/bash
@@ -95,11 +136,18 @@ cat > "$APP/Contents/Info.plist" <<EOF
 </plist>
 EOF
 
-# 8. Build .icns from bundled logo
+# 8. Build .icns from the committed 1024px macOS app icon.
+#    Falls back to the upstream 128px logo if the asset is missing (e.g. when
+#    the script is run standalone outside the repo).
 echo "==> Building app icon"
 ICONSET="$WORK/NanoVNASaver.iconset"
 mkdir -p "$ICONSET"
-SRC="$UI_SRC/logo_128x128.png"
+if [ -f "$SCRIPT_DIR/assets/AppIcon.png" ]; then
+    SRC="$SCRIPT_DIR/assets/AppIcon.png"
+else
+    echo "    (assets/AppIcon.png not found — falling back to upstream logo)"
+    SRC="$UI_SRC/logo_128x128.png"
+fi
 for s in 16 32 64 128 256 512 1024; do
     sips -z "$s" "$s" "$SRC" --out "$ICONSET/icon_${s}x${s}.png" >/dev/null
 done

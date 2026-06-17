@@ -20,8 +20,9 @@ Requires Python 3.10+ at `/opt/homebrew/bin/python3.12` (override with `PYTHON=.
 4. `pip install`s NanoVNASaver from the GitHub tag.
 5. Compiles `.ui` and `.qrc` files manually with `pyside6-uic` / `pyside6-rcc` — the wheel install skips this step.
 6. Patches the generated `about.py` to fix a broken `import main_rc` (changes it to `from . import main_rc`).
+   - **macOS UI sizing fixes** — upstream hard-codes control sizes (`setFixedHeight(20)`, `setFixedWidth(60)`) tuned for Windows/Linux. On macOS the native control chrome (taller fields, focus-ring margins, larger system font) needs more room, so Qt clips text (`50kHz`→`50kH`, `Sweep`→`Sweer`, `Rescan`→`Rescar`). The script relaxes the fixed sizes to minimums and widens the control column slightly.
 7. Writes a bash launcher at `Contents/MacOS/NanoVNASaver` that execs the bundled venv Python; logs go to `~/Library/Logs/NanoVNASaver/nanovnasaver.log`.
-8. Generates `Info.plist` and a multi-resolution `.icns` from the project's bundled logo.
+8. Generates `Info.plist` and a multi-resolution `.icns` from the committed [`assets/AppIcon.png`](assets/AppIcon.png) — a 1024px macOS-style icon (rounded square + the NanoVNASaver Smith-chart logo). Regenerate it with [`assets/make_icon.py`](assets/make_icon.py). Falls back to the upstream 128px logo if the asset is missing.
 9. **Slim Qt** — keeps only the frameworks NanoVNASaver actually imports (`QtCore`, `QtGui`, `QtWidgets`) plus safe runtime deps (`QtNetwork`, `QtDBus`, `QtPrintSupport`, `QtSvg`, `QtSvgWidgets`). Deletes everything else, including `QtWebEngineCore` (~590 MB of Chromium), all 3D/Qml/Multimedia/Charts/etc., plus `Qt/qml`, `Qt/translations`, `Qt/metatypes`, `Qt/libexec`.
 10. **Slim plugins** — keeps `platforms`, `imageformats`, `styles`, `iconengines`, `tls`, `networkinformation`, `platforminputcontexts`, `generic`. Drops the rest.
 11. **Thin** — runs `lipo -thin arm64` over every universal Mach-O in the bundle, since Python itself is arm64-only and the x86_64 slices are dead weight.
