@@ -12,6 +12,12 @@
 
 Requires Python 3.10+ at `/opt/homebrew/bin/python3.12` (override with `PYTHON=...`). Apple Silicon assumed — the `lipo` thinning step is skipped on Intel.
 
+The bundle carries a **release version** = upstream tag + this repo's packaging revision, e.g. `0.7.3-mac1` (Info.plist key `NVNASMacReleaseVersion`). The revision comes from `MAC_REV` (default `mac1`) and must match the GitHub release tag the build is published as, because the update check compares the two:
+
+```bash
+MAC_REV=mac2 ./build.sh v0.7.3     # bundle for release tag v0.7.3-mac2
+```
+
 ## What the script does
 
 1. Creates a fresh `.app` bundle with `Contents/{MacOS,Resources}` layout.
@@ -21,7 +27,7 @@ Requires Python 3.10+ at `/opt/homebrew/bin/python3.12` (override with `PYTHON=.
 5. Compiles `.ui` and `.qrc` files manually with `pyside6-uic` / `pyside6-rcc` — the wheel install skips this step.
 6. Patches the generated `about.py` to fix a broken `import main_rc` (changes it to `from . import main_rc`).
    - **macOS UI sizing fixes** — upstream hard-codes control sizes (`setFixedHeight(20)`, `setFixedWidth(60)`) tuned for Windows/Linux. On macOS the native control chrome (taller fields, focus-ring margins, larger system font) needs more room, so Qt clips text (`50kHz`→`50kH`, `Sweep`→`Sweer`, `Rescan`→`Rescar`). The script relaxes the fixed sizes to minimums and widens the control column slightly.
-7. Writes a bash launcher at `Contents/MacOS/NanoVNASaver` that execs the bundled venv Python; logs go to `~/Library/Logs/NanoVNASaver/nanovnasaver.log`.
+7. Writes a bash launcher at `Contents/MacOS/NanoVNASaver` that execs the bundled venv Python; logs go to `~/Library/Logs/NanoVNASaver/nanovnasaver.log`. Before the exec it starts the [update check](#update-check) (`Contents/Resources/update_check.py`, copied from [`updater/`](updater/)) detached in the background.
 8. Generates `Info.plist` and a multi-resolution `.icns` from the committed [`assets/AppIcon.png`](assets/AppIcon.png) — a 1024px macOS-style icon (rounded square + the NanoVNASaver Smith-chart logo). Regenerate it with [`assets/make_icon.py`](assets/make_icon.py). Falls back to the upstream 128px logo if the asset is missing.
 9. **Slim Qt** — keeps only the frameworks NanoVNASaver actually imports (`QtCore`, `QtGui`, `QtWidgets`) plus safe runtime deps (`QtNetwork`, `QtDBus`, `QtPrintSupport`, `QtSvg`, `QtSvgWidgets`). Deletes everything else, including `QtWebEngineCore` (~590 MB of Chromium), all 3D/Qml/Multimedia/Charts/etc., plus `Qt/qml`, `Qt/translations`, `Qt/metatypes`, `Qt/libexec`.
 10. **Slim plugins** — keeps `platforms`, `imageformats`, `styles`, `iconengines`, `tls`, `networkinformation`, `platforminputcontexts`, `generic`. Drops the rest.
@@ -36,6 +42,41 @@ Requires Python 3.10+ at `/opt/homebrew/bin/python3.12` (override with `PYTHON=.
 | After arm64 thin | ~250 MB |
 
 App runs natively on Apple Silicon (no Rosetta).
+
+## Update check
+
+*Unreleased — ships with the next release (v0.7.3-mac1 does not have it).*
+
+At launch, at most once every 24 hours, the app asks GitHub for the latest release of **this** repo (`vu2cpl/nanovnasaver-mac`, the Mac build you install) — one anonymous `GET https://api.github.com/repos/vu2cpl/nanovnasaver-mac/releases/latest`, no token, 10 s timeout, nothing else sent. If that release is newer than the one you are running (numeric compare, so `v0.7.3-mac2` > `0.7.3-mac1` and `v0.7.4-mac1` > `0.7.3-mac9`), a native macOS dialog appears about 10 seconds after launch:
+
+> NanoVNASaver for Mac 0.7.3-mac2 is available — you have 0.7.3-mac1.
+
+- **Download** opens the release page in your browser. Nothing is downloaded or installed automatically.
+- **Skip This Version** hides that release; you are asked again only when a newer one appears.
+- **Later** (or Esc) asks again after the next 24 h.
+
+The check runs in a separate background process started by the launcher, so it never delays the app, and it is silent on any failure (offline, rate-limited, GitHub error) apart from one line in `~/Library/Logs/NanoVNASaver/nanovnasaver.log`.
+
+Turn it off (or back on):
+
+```bash
+defaults write org.nanovna.saver CheckForUpdates -bool false
+defaults delete org.nanovna.saver CheckForUpdates     # back to the default (on)
+```
+
+Other keys in the same domain: `UpdateLastCheck` (time of the last check) and `UpdateSkippedVersion` (the skipped release tag); `defaults delete org.nanovna.saver` resets all three. Upstream NanoVNA-Saver keeps its own settings in `~/.config/NanoVNASaver/` and is not affected.
+
+Upstream's own **About → Check for updates** button is unchanged: it runs only when clicked and looks at the upstream repo's tags, which are the Python releases, not this Mac build.
+
+For developers:
+
+```bash
+python3 -m unittest discover -s updater            # unit tests (version compare, throttle, parsing, failure path)
+# live check, prints the verdict, no dialog, nothing saved (point --contents at a built bundle):
+python3 updater/update_check.py --contents /Applications/NanoVNASaver.app/Contents --dry-run
+# show the dialog once: pretend to be 0.0.1 (ignores the 24 h limit and the skip, saves nothing)
+NVNAS_UPDATE_TEST_VERSION=0.0.1 python3 updater/update_check.py --contents /Applications/NanoVNASaver.app/Contents
+```
 
 ## TODO
 

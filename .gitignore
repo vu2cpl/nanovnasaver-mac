@@ -2,3 +2,4 @@
 *.app/
 build/
 dist/
+__pycache__/

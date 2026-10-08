@@ -5,8 +5,13 @@
 # from source, applies three undocumented fixes, then strips ~80% of the
 # install (unused Qt modules + x86_64 slices) for a ~250 MB native arm64 app.
 #
-# Usage:  ./build.sh [version-tag] [destination]
+# Usage:  [MAC_REV=macN] ./build.sh [version-tag] [destination]
 # e.g.:   ./build.sh v0.7.3 ~/Applications/NanoVNASaver.app
+#
+# MAC_REV is this repo's packaging revision on top of the upstream tag; the
+# bundle's release version is "<tag without v>-<MAC_REV>" (e.g. 0.7.3-mac1)
+# and MUST match the GitHub release tag it ships as (v0.7.3-mac1), because the
+# launch-time update check compares the two.
 #
 # Copyright (C) 2026 Manoj Kumar R <vu2cpl@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
@@ -18,6 +23,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TAG="${1:-v0.7.3}"
 APP="${2:-$HOME/Applications/NanoVNASaver.app}"
 PYTHON="${PYTHON:-/opt/homebrew/bin/python3.12}"
+MAC_REV="${MAC_REV:-mac1}"
+MAC_VERSION="${TAG#v}-${MAC_REV}"
+
+if [[ ! "$MAC_REV" =~ ^mac[0-9]+$ ]]; then
+    echo "ERROR: MAC_REV must look like mac1, mac2, ... (got '$MAC_REV')"
+    exit 1
+fi
+if [ ! -f "$SCRIPT_DIR/updater/update_check.py" ]; then
+    echo "ERROR: $SCRIPT_DIR/updater/update_check.py not found (run build.sh from the repo)"
+    exit 1
+fi
 
 if [ ! -x "$PYTHON" ]; then
     echo "ERROR: need Python 3.10+ at $PYTHON (set \$PYTHON to override)"
@@ -31,7 +47,7 @@ fi
 WORK=$(mktemp -d)
 trap "rm -rf $WORK" EXIT
 
-echo "==> Building NanoVNASaver.app ($TAG) at $APP"
+echo "==> Building NanoVNASaver.app ($TAG, release version $MAC_VERSION) at $APP"
 
 # 1. Fresh bundle layout
 rm -rf "$APP"
@@ -104,12 +120,22 @@ perl -i -pe 's/^(        btn_show_analysis = QtWidgets\.QPushButton\("Analysis \
     "$PKG/NanoVNASaver.py"
 
 # 6. Build launcher
+#    The update check (updater/update_check.py, see README "Update check") is
+#    started detached in a subshell before the exec, so it never delays the app,
+#    is never the app's child (no zombie), and its failures only reach the log.
+#    It gets the launcher's PID ($$), which exec hands to the app, so it can skip
+#    the dialog if the app has already quit.
+cp "$SCRIPT_DIR/updater/update_check.py" "$APP/Contents/Resources/update_check.py"
 cat > "$APP/Contents/MacOS/NanoVNASaver" <<'EOF'
 #!/bin/bash
 APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PYTHON="$APP_DIR/Resources/venv/bin/python3"
 LOGDIR="$HOME/Library/Logs/NanoVNASaver"
 mkdir -p "$LOGDIR"
+if [ -f "$APP_DIR/Resources/update_check.py" ]; then
+    ( "$PYTHON" -I "$APP_DIR/Resources/update_check.py" --contents "$APP_DIR" --pid $$ \
+        </dev/null >>"$LOGDIR/nanovnasaver.log" 2>&1 & )
+fi
 exec "$PYTHON" -m NanoVNASaver "$@" >>"$LOGDIR/nanovnasaver.log" 2>&1
 EOF
 chmod +x "$APP/Contents/MacOS/NanoVNASaver"
@@ -126,6 +152,7 @@ cat > "$APP/Contents/Info.plist" <<EOF
     <key>CFBundleIdentifier</key>      <string>org.nanovna.saver</string>
     <key>CFBundleVersion</key>         <string>${TAG#v}</string>
     <key>CFBundleShortVersionString</key><string>${TAG#v}</string>
+    <key>NVNASMacReleaseVersion</key>  <string>${MAC_VERSION}</string>
     <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>CFBundleSignature</key>       <string>????</string>
@@ -205,4 +232,5 @@ AFTER=$(du -sh "$APP" | awk '{print $1}')
 echo
 echo "Done. $APP"
 echo "Size: $BEFORE → $AFTER"
+echo "Release version: $MAC_VERSION (tag the GitHub release v$MAC_VERSION)"
 echo "Launch: open '$APP'"
