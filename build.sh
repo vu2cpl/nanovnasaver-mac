@@ -5,6 +5,13 @@
 # from source, applies three undocumented fixes, then strips ~80% of the
 # install (unused Qt modules + x86_64 slices) for a ~250 MB native arm64 app.
 #
+# The app carries its own Python: a relocatable CPython from Astral's
+# python-build-standalone (pinned below, checksum-verified, cached in
+# ~/Library/Caches/nanovnasaver-mac). It links only macOS system libraries and
+# its OpenSSL reads macOS's own /private/etc/ssl/cert.pem, so the app runs on a
+# Mac without Homebrew. (Until 2026-10-09 the bundle was a venv whose python3.12
+# was a symlink to Homebrew's python@3.12 -- no Homebrew, no app.)
+#
 # Usage:  [MAC_REV=macN] ./build.sh [version-tag] [destination]
 # e.g.:   ./build.sh v0.7.3 ~/Applications/NanoVNASaver.app
 #
@@ -22,8 +29,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TAG="${1:-v0.7.3}"
 APP="${2:-$HOME/Applications/NanoVNASaver.app}"
-PYTHON="${PYTHON:-/opt/homebrew/bin/python3.12}"
 MAC_REV="${MAC_REV:-mac1}"
+
+# Bundled Python (python-build-standalone). To move to a newer one, change the
+# three values together; the SHA-256 is the release's SHA256SUMS line.
+PBS_RELEASE="20261003"
+PBS_PY="3.12.15"
+PBS_SHA256="ad8d0c637c0a36b967b310e2c07254f4d2ca8cabaa7699e55ed6290aceb481a2"
+PBS_ASSET="cpython-${PBS_PY}+${PBS_RELEASE}-aarch64-apple-darwin-install_only_stripped.tar.gz"
+PBS_URL="https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_RELEASE}/${PBS_ASSET/+/%2B}"
+PBS_CACHE="${NVNAS_CACHE:-$HOME/Library/Caches/nanovnasaver-mac}"
 MAC_VERSION="${TAG#v}-${MAC_REV}"
 
 if [[ ! "$MAC_REV" =~ ^mac[0-9]+$ ]]; then
@@ -35,10 +50,6 @@ if [ ! -f "$SCRIPT_DIR/updater/update_check.py" ]; then
     exit 1
 fi
 
-if [ ! -x "$PYTHON" ]; then
-    echo "ERROR: need Python 3.10+ at $PYTHON (set \$PYTHON to override)"
-    exit 1
-fi
 
 if [[ "$(uname -m)" != "arm64" ]]; then
     echo "WARNING: this script is tuned for Apple Silicon. x86_64 thinning will fail."
@@ -53,16 +64,27 @@ echo "==> Building NanoVNASaver.app ($TAG, release version $MAC_VERSION) at $APP
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-# 2. Self-contained venv, with `python` symlink (setup.py needs it)
-echo "==> Creating venv"
-"$PYTHON" -m venv "$APP/Contents/Resources/venv"
-ln -sf python3 "$APP/Contents/Resources/venv/bin/python"
-"$APP/Contents/Resources/venv/bin/pip" install --quiet --upgrade pip
+# 2. Bundled Python: fetch (once, cached) + verify + unpack into the app.
+#    It already has a `python` name, which upstream's setup.py calls bare.
+echo "==> Bundling Python $PBS_PY (python-build-standalone $PBS_RELEASE)"
+mkdir -p "$PBS_CACHE"
+if [ ! -f "$PBS_CACHE/$PBS_ASSET" ]; then
+    curl -fL --retry 3 -o "$PBS_CACHE/$PBS_ASSET.part" "$PBS_URL"
+    mv "$PBS_CACHE/$PBS_ASSET.part" "$PBS_CACHE/$PBS_ASSET"
+fi
+if [ "$(shasum -a 256 "$PBS_CACHE/$PBS_ASSET" | awk '{print $1}')" != "$PBS_SHA256" ]; then
+    echo "ERROR: checksum mismatch for $PBS_CACHE/$PBS_ASSET -- delete it and rerun"
+    exit 1
+fi
+tar -xzf "$PBS_CACHE/$PBS_ASSET" -C "$APP/Contents/Resources"   # -> Resources/python/
+PYBIN="$APP/Contents/Resources/python/bin"
+SITE="$APP/Contents/Resources/python/lib/python3.12/site-packages"
+"$PYBIN/python3" -m pip install --quiet --upgrade pip
 
 # 3. Install NanoVNASaver from GitHub tag
 echo "==> Installing NanoVNASaver $TAG (this is slow)"
-PATH="$APP/Contents/Resources/venv/bin:$PATH" \
-    "$APP/Contents/Resources/venv/bin/pip" install --quiet \
+PATH="$PYBIN:$PATH" \
+    "$PYBIN/python3" -m pip install --quiet \
     "git+https://github.com/NanoVNA-Saver/nanovna-saver.git@$TAG"
 
 # 4. Clone source for UI files (wheel doesn't compile them)
@@ -71,9 +93,9 @@ git clone --quiet --depth 1 --branch "$TAG" \
     https://github.com/NanoVNA-Saver/nanovna-saver.git "$WORK/src"
 
 UI_SRC="$WORK/src/src/NanoVNASaver/Windows/ui"
-UI_DST="$APP/Contents/Resources/venv/lib/python3.12/site-packages/NanoVNASaver/Windows/ui"
-"$APP/Contents/Resources/venv/bin/pyside6-uic" "$UI_SRC/about.ui" -o "$UI_DST/about.py"
-"$APP/Contents/Resources/venv/bin/pyside6-rcc" "$UI_SRC/main.qrc"  -o "$UI_DST/main_rc.py"
+UI_DST="$SITE/NanoVNASaver/Windows/ui"
+"$PYBIN/pyside6-uic" "$UI_SRC/about.ui" -o "$UI_DST/about.py"
+"$PYBIN/pyside6-rcc" "$UI_SRC/main.qrc"  -o "$UI_DST/main_rc.py"
 cp "$UI_SRC/icon_48x48.png" "$UI_SRC/logo_128x128.png" "$UI_DST/"
 
 # 5. Fix broken `import main_rc` in generated about.py
@@ -85,7 +107,7 @@ sed -i '' 's/^import main_rc$/from . import main_rc/' "$UI_DST/about.py"
 #     room, so Qt clips text: "50kHz"->"50kH", "Sweep"->"Sweer", "Rescan"->"Rescar".
 #     Relax the fixed sizes to minimums and widen the control column slightly.
 echo "==> Applying macOS UI sizing fixes"
-PKG="$APP/Contents/Resources/venv/lib/python3.12/site-packages/NanoVNASaver"
+PKG="$SITE/NanoVNASaver"
 # Let controls grow to their natural macOS height instead of clipping at 20px
 sed -i '' 's/setFixedHeight(20)/setMinimumHeight(24)/g' \
     "$PKG/Controls/SweepControl.py" "$PKG/Controls/MarkerControl.py"
@@ -129,7 +151,7 @@ cp "$SCRIPT_DIR/updater/update_check.py" "$APP/Contents/Resources/update_check.p
 cat > "$APP/Contents/MacOS/NanoVNASaver" <<'EOF'
 #!/bin/bash
 APP_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PYTHON="$APP_DIR/Resources/venv/bin/python3"
+PYTHON="$APP_DIR/Resources/python/bin/python3"
 LOGDIR="$HOME/Library/Logs/NanoVNASaver"
 mkdir -p "$LOGDIR"
 if [ -f "$APP_DIR/Resources/update_check.py" ]; then
@@ -189,7 +211,7 @@ BEFORE=$(du -sh "$APP" | awk '{print $1}')
 
 # 9. Slim Qt frameworks + bindings
 echo "==> Slimming Qt"
-PY="$APP/Contents/Resources/venv/lib/python3.12/site-packages/PySide6"
+PY="$SITE/PySide6"
 KEEP_FW="QtCore QtGui QtWidgets QtDBus QtNetwork QtPrintSupport QtSvg QtSvgWidgets"
 
 for fw in "$PY/Qt/lib"/*.framework; do
@@ -226,6 +248,36 @@ if [[ "$(uname -m)" == "arm64" ]]; then
             fi
         fi
     done < <(find "$APP" -type f)
+fi
+
+# 12. Slim the bundled Python: Tk/Tcl, IDLE, turtle demos and the C headers are
+#     never used by a Qt app at run time (the headers were only for pip builds).
+echo "==> Slimming bundled Python"
+PYROOT="$APP/Contents/Resources/python"
+rm -rf "$PYROOT"/lib/tcl* "$PYROOT"/lib/tk* "$PYROOT"/lib/itcl* "$PYROOT"/lib/thread* \
+       "$PYROOT/lib/python3.12/idlelib" "$PYROOT/lib/python3.12/tkinter" \
+       "$PYROOT/lib/python3.12/turtledemo" "$PYROOT"/lib/python3.12/lib-dynload/_tkinter* \
+       "$PYROOT"/bin/idle3* "$PYROOT/include" "$PYROOT/share"
+
+# 13. Guard: nothing in the bundle may load a library from outside macOS or the
+#     bundle itself (e.g. /opt/homebrew, /usr/local) -- that is exactly the bug
+#     the bundled Python fixes, so fail the build rather than ship it again.
+echo "==> Checking the bundle is self-contained"
+BAD=$(find "$APP" -type f \( -perm -u+x -o -name '*.so' -o -name '*.dylib' \) -print0 \
+      | xargs -0 file 2>/dev/null | grep 'Mach-O' | cut -d: -f1 \
+      | while IFS= read -r f; do otool -l "$f" 2>/dev/null | awk -v f="$f" \
+            '/cmd LC_(LOAD|LOAD_WEAK|REEXPORT|LAZY_LOAD)_DYLIB/{getline; getline; print f": "$2}'; done \
+      | grep -Ev ': (/usr/lib/|/System/|@rpath/|@loader_path/|@executable_path/)' || true)
+# ...and no symlink may point outside the bundle (the old venv's python3.12 did).
+APP_REAL="$(cd "$APP" && pwd -P)"
+while IFS= read -r l; do
+    t="$(cd "$(dirname "$l")" && cd "$(dirname "$(readlink "$l")")" 2>/dev/null && pwd -P)" || t=""
+    case "$t" in "$APP_REAL"|"$APP_REAL"/*) ;; *) BAD="$BAD"$'\n'"$l -> $(readlink "$l")";; esac
+done < <(find "$APP" -type l)
+BAD="$(echo "$BAD" | sed '/^$/d')"
+if [ -n "$BAD" ]; then
+    echo "ERROR: the bundle depends on files outside macOS/itself:"; echo "$BAD" | head -20
+    exit 1
 fi
 
 AFTER=$(du -sh "$APP" | awk '{print $1}')

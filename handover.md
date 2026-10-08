@@ -1,10 +1,20 @@
 # Handover — NanoVNASaver Mac build
 
-_Last updated 2026-10-08._
+_Last updated 2026-10-09._
 
 Built a self-contained `.app` for NanoVNA-Saver (no upstream macOS binary exists), slimmed it heavily, and published it on GitHub (`vu2cpl/nanovnasaver-mac`, now a public repo).
 
 ## What changed
+
+### 2026-10-09 — the app carries its own Python (unreleased — ships with the next release)
+
+Manoj: "fix it, bundle python in the app" (after the update-check work found the bundle's `venv/bin/python3.12` was a symlink to Homebrew's `python@3.12`, so the app could not start on a Mac without it; size was never the reason — `python -m venv` symlinks by default).
+
+- **What:** `build.sh` now bundles CPython 3.12.15 from Astral's python-build-standalone (`cpython-3.12.15+20261003-aarch64-apple-darwin-install_only_stripped.tar.gz`, 23.8 MB, release `20261003`), pinned by version + SHA-256 (`ad8d0c63…b481a2`, from the release's SHA256SUMS), downloaded once into `~/Library/Caches/nanovnasaver-mac` (`NVNAS_CACHE` overrides) and unpacked to `Contents/Resources/python/`. NanoVNASaver is pip-installed straight into it — no venv; the launcher runs `Resources/python/bin/python3`. The `PYTHON=` build variable and the Homebrew requirement are gone.
+- **Why this Python:** relocatable by design (what `uv` installs), links only `/usr/lib` and `/System` libraries, OpenSSL built in with its default CA file at macOS's `/private/etc/ssl/cert.pem`, and already has `bin/python`. Copying Homebrew's Python instead would have meant rewriting the links of OpenSSL, SQLite, xz and mpdecimal, replacing its `site-packages` symlink, and fixing its CA path (`/opt/homebrew/etc/openssl@3`) — HTTPS would have failed without Homebrew.
+- **New build steps:** 12 slims the bundled Python (Tk/Tcl, IDLE, turtle demos, headers, `share/`); 13 fails the build if any Mach-O load command points outside `/usr/lib`, `/System` or the bundle (`@rpath`/`@loader_path`/`@executable_path`), or any symlink points outside the bundle. Run read-only against the installed v0.7.3-mac1 app, the symlink check flags exactly `venv/bin/python3.12 -> /opt/homebrew/opt/python@3.12/bin/python3.12`.
+- **Size:** 1.4 GB → 306 MB (was ~252 MB); the zip will grow by roughly 15–20 MB.
+- **Tested 2026-10-09** (scratch build, 38 s with a warm cache): under `sandbox-exec` denying reads of `/opt/homebrew` and `/usr/local` — where Homebrew's own Python cannot even exec — the bundled Python ran and imported ssl/sqlite3/lzma/decimal/ctypes; `update_check.py --dry-run` reached GitHub over HTTPS ("latest v0.7.3-mac1 … current"); `python3 -m NanoVNASaver` opened its full main window with a scratch `HOME`, and `vmmap`/`lsof` showed 0 Homebrew files mapped. Launched normally (`open`, through the launcher, a copy with the update check removed so no prefs were written) Launch Services registered it as "NanoVNASaver", bundle id `org.nanovna.saver`, Version 0.7.3 — the Dock/menu show the app, not "python3" (that name appears only when its Python is started by hand). The real `~/.config/NanoVNASaver/*.ini` (7 Jul) were untouched and no `org.nanovna.saver` preferences were created. No NanoVNA connected. Not yet run on a second Mac.
 
 ### 2026-10-08 — launch-time update check (unreleased — ships with the next release)
 
@@ -47,7 +57,7 @@ Part of Manoj's all-apps decision: every app gets an in-app check against its ow
 
 All three are handled inside `build.sh`:
 
-1. Need `python` symlink in venv — upstream `setup.py` calls bare `python`
+1. Need a `python` command — upstream `setup.py` calls bare `python` (the bundled python-build-standalone Python has `bin/python`; the old venv needed a symlink)
 2. UI files (`about.py`, `main_rc.py`) must be compiled manually with `pyside6-uic` / `pyside6-rcc` after install — wheel doesn't ship them
 3. Generated `about.py` has `import main_rc` → must be patched to `from . import main_rc`
 
@@ -56,7 +66,7 @@ Plus a fourth category of build-time patches for **macOS UI sizing** (see "What 
 ## TODO
 
 - [ ] **Next release** (`v0.7.3-mac2` or similar): build with the matching `MAC_REV`, note the new update check in the release notes. Ships PR #1 polish + the update check.
-- [ ] **Not self-contained against Homebrew:** the bundle's `venv/bin/python3.12` is a symlink to `/opt/homebrew/opt/python@3.12/bin/python3.12` (seen 2026-10-08 on the installed copy; `python -m venv` symlinks by default). A Mac without Homebrew `python@3.12` would have no interpreter for the app. Not yet tested on such a Mac. A relocatable Python (python.org framework copied in, or python-build-standalone) would fix it — overlaps with the universal2 item.
+- [x] ~~**Not self-contained against Homebrew**~~ — DONE 2026-10-09: the app bundles its own Python (python-build-standalone 3.12.15), see "What changed". The released v0.7.3-mac1 and the installed `/Applications/NanoVNASaver.app` still have the Homebrew symlink until the next release is built and installed.
 - [ ] **Universal2 build** — install python.org universal2 Python 3.12, skip the lipo-thin step → single `.app` for both Intel + Apple Silicon
 - [ ] Proper Developer ID codesigning + notarization (kill the `xattr -dr com.apple.quarantine` step)
 - [ ] CI: GitHub Actions on `macos-14` + `macos-13` runners
