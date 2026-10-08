@@ -50,7 +50,7 @@ Part of Manoj's all-apps decision: every app gets an in-app check against its ow
 | Remote | https://github.com/vu2cpl/nanovnasaver-mac (public) |
 | Latest release | `v0.7.3-mac1` — `NanoVNASaver-v0.7.3-mac1-arm64.zip` (85 MB zip, 253 MB extracted). HEAD also has the PR #1 macOS-polish changes and the update check (2026-10-08); release artifact has not been re-cut. |
 | Update check | `updater/update_check.py` → `Contents/Resources/update_check.py`, started by the launcher; prefs in `defaults` domain `org.nanovna.saver` |
-| Built app | `/Applications/NanoVNASaver.app` — local build of `f5ce279` (bundled Python, update check), installed 2026-10-09 04:50 on Manoj's "install the new build in applications": 306 MB, `NVNASMacReleaseVersion` 0.7.3-mac1, not codesigned (neither was the copy it replaced, now in the Trash). Verified with /opt/homebrew + /usr/local hidden: NanoVNASaver/PySide6/numpy/ssl import, update check "current". |
+| Built app | `/Applications/NanoVNASaver.app` — local build of `f5ce279` (bundled Python, update check), installed 2026-10-09 04:50 on Manoj's "install the new build in applications": 306 MB, `NVNASMacReleaseVersion` 0.7.3-mac1, not codesigned (neither was the copy it replaced, now in the Trash). Verified with /opt/homebrew + /usr/local hidden: NanoVNASaver/PySide6/numpy/ssl import, update check "current". Manoj opened it 2026-10-09: "works fine". (The "Check for updates" he saw in About is upstream's manual check of NanoVNA-Saver's own releases; ours runs silently at launch, no button.) |
 | Logs | `~/Library/Logs/NanoVNASaver/nanovnasaver.log` |
 
 ## Three undocumented build quirks (wheel-install fixes)
