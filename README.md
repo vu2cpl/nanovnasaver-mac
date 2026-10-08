@@ -44,13 +44,13 @@ MAC_REV=mac2 ./build.sh v0.7.3     # bundle for release tag v0.7.3-mac2
 | Raw `pip install` (with bundled Python) | ~1.4 GB |
 | After Qt slim, arm64 thin and Python slim | ~305 MB |
 
-The bundled Python accounts for about 50 MB of that; until 2026-10-09 the app (~250 MB) borrowed Homebrew's `python@3.12` instead and did not start without it.
+The bundled Python accounts for about 50 MB of that (since v0.7.3-mac2); v0.7.3-mac1 (~250 MB) borrowed Homebrew's `python@3.12` instead and did not start without it.
 
 App runs natively on Apple Silicon (no Rosetta).
 
 ## Update check
 
-*Unreleased — ships with the next release (v0.7.3-mac1 does not have it).*
+*Since v0.7.3-mac2 (v0.7.3-mac1 does not have it).*
 
 At launch, at most once every 24 hours, the app asks GitHub for the latest release of **this** repo (`vu2cpl/nanovnasaver-mac`, the Mac build you install) — one anonymous `GET https://api.github.com/repos/vu2cpl/nanovnasaver-mac/releases/latest`, no token, 10 s timeout, nothing else sent. If that release is newer than the one you are running (numeric compare, so `v0.7.3-mac2` > `0.7.3-mac1` and `v0.7.4-mac1` > `0.7.3-mac9`), a native macOS dialog appears about 10 seconds after launch:
 

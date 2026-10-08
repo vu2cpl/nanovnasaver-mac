@@ -6,7 +6,18 @@ Built a self-contained `.app` for NanoVNA-Saver (no upstream macOS binary exists
 
 ## What changed
 
-### 2026-10-09 — update check follow-up + `MAC_REV` required (unreleased — ships with the next release)
+### 2026-10-09 — v0.7.3-mac2 released and installed
+
+Manoj approved the release (next patch version, GitHub release, install).
+
+- **Tag `v0.7.3-mac2`** (annotated) on `59a88d4`. Release "NanoVNASaver v0.7.3 (mac2) — Apple Silicon": https://github.com/vu2cpl/nanovnasaver-mac/releases/tag/v0.7.3-mac2 — now "Latest".
+- **Asset:** `NanoVNASaver-v0.7.3-mac2-arm64.zip`, 108,298,739 bytes (108 MB; mac1 was 85 MB), 306 MB unpacked, SHA-256 `042d0dbc58dfc64b5908903f4293e1ab7025b7b3aed6c51dc88580d60f1e93af` (in the notes, like mac1 — no separate .sha256 file). Zipped with `ditto -c -k --norsrc --keepParent`: 0 AppleDouble / `__MACOSX` entries, 6570 entries.
+- **Built** with `MAC_REV=mac2 ./build.sh v0.7.3 <scratch>` (bundled-Python cache warm). `NVNASMacReleaseVersion` = `0.7.3-mac2`, `CFBundleShortVersionString` 0.7.3; the build's step-13 self-contained check passed; PR #1 patches present in the bundled source. The first build was discarded because the verification imports wrote 157 stdlib `.pyc` files into it — the shipped bundle is a second clean build, and every later check ran with `python3 -I -B` on copies.
+- **Verified:** the zip unpacked with both `ditto -x -k` and `unzip` is byte-identical to the build (`diff -r`, 7 symlinks intact). From each unpacked copy, under `sandbox-exec` denying reads of `/opt/homebrew` and `/usr/local`, the bundled Python imported NanoVNASaver, PySide6.QtWidgets, numpy and ssl (OpenSSL 3.5.9), and `update_check.py --dry-run` reached GitHub. `gh release download` of the asset gave the same SHA-256. Before the install, the old `/Applications` copy (labelled 0.7.3-mac1) dry-ran "latest v0.7.3-mac2, have 0.7.3-mac1: update"; the new one reports "current".
+- **Release notes:** bundled Python (mac1 needed Homebrew `python@3.12`), the update check (once a day, Download/Skip/Later, `defaults write org.nanovna.saver CheckForUpdates -bool false` to turn off; mac1 users have to fetch mac2 by hand), PR #1 macOS polish (mac1 predates it), install via Finder or `ditto -x -k` + the `xattr` quarantine step (not Developer-ID signed or notarised), upstream credit (Rune B. Broberg, NanoVNA-Saver/nanovna-saver).
+- **Installed:** NanoVNASaver was not running, so nothing was quit or relaunched. The previous `/Applications/NanoVNASaver.app` (the local `f5ce279` build) went to `~/.Trash/NanoVNASaver.app-prev-20261009-050659`; the release build was `ditto`ed in — `diff -r` identical to the build the zip was made from, Homebrew-hidden import and dry run ("current") OK. Not launched as a GUI this time; no NanoVNA connected.
+
+### 2026-10-09 — update check follow-up + `MAC_REV` required (released in v0.7.3-mac2)
 
 Manoj's decisions for the update check (same day as the bundled Python below):
 
@@ -16,7 +27,7 @@ Manoj's decisions for the update check (same day as the bundled Python below):
 - **Stamp rounding fix (same day, follow-up commit):** `Prefs.set_last_check` wrote `f"{when:.0f}"`, i.e. rounded to the nearest second, so a stamp could sit up to 0.5 s in the future, and `check_due` reads a future stamp as "clock went back" = due. Now it rounds down (`int(when)`). Harmless in real use (relaunches are seconds apart), but it made the new relaunch test fail about half the time; the first commit (`b8b45f7`) went out with that flaky test because a `| tail` in the commit command hid the failing exit status.
 - **Tests (2026-10-09):** `python3 -m unittest discover -s updater` — 18 → 29 pass (40 back-to-back runs at shifting sub-second offsets, 0 failures). New `Run` cases drive `main()` with fake prefs/fetch/dialog: a successful check stamps (current and newer), seven failure kinds stamp nothing, a failure keeps the last success's time, an offline launch is retried at the next launch and then throttled after the success, a recent success throttles, dev detection (any case), a dev build makes no request, the test hook and `--dry-run` still check a dev build and save nothing; plus `fetch_latest` treating HTTP 203 as a failure and a stamp that is never in the future. `bash -n build.sh` clean; `build.sh` run with `MAC_REV` unset, empty and `foo` exited 1 at once with nothing created (scratch destination and cache). No live GitHub call, no rebuild, `/Applications/NanoVNASaver.app` untouched — it is still the `f5ce279` build, which has the old stamp-the-attempt behaviour.
 
-### 2026-10-09 — the app carries its own Python (unreleased — ships with the next release)
+### 2026-10-09 — the app carries its own Python (released in v0.7.3-mac2)
 
 Manoj: "fix it, bundle python in the app" (after the update-check work found the bundle's `venv/bin/python3.12` was a symlink to Homebrew's `python@3.12`, so the app could not start on a Mac without it; size was never the reason — `python -m venv` symlinks by default).
 
@@ -26,7 +37,7 @@ Manoj: "fix it, bundle python in the app" (after the update-check work found the
 - **Size:** 1.4 GB → 306 MB (was ~252 MB); the zip will grow by roughly 15–20 MB.
 - **Tested 2026-10-09** (scratch build, 38 s with a warm cache): under `sandbox-exec` denying reads of `/opt/homebrew` and `/usr/local` — where Homebrew's own Python cannot even exec — the bundled Python ran and imported ssl/sqlite3/lzma/decimal/ctypes; `update_check.py --dry-run` reached GitHub over HTTPS ("latest v0.7.3-mac1 … current"); `python3 -m NanoVNASaver` opened its full main window with a scratch `HOME`, and `vmmap`/`lsof` showed 0 Homebrew files mapped. Launched normally (`open`, through the launcher, a copy with the update check removed so no prefs were written) Launch Services registered it as "NanoVNASaver", bundle id `org.nanovna.saver`, Version 0.7.3 — the Dock/menu show the app, not "python3" (that name appears only when its Python is started by hand). The real `~/.config/NanoVNASaver/*.ini` (7 Jul) were untouched and no `org.nanovna.saver` preferences were created. No NanoVNA connected. Not yet run on a second Mac.
 
-### 2026-10-08 — launch-time update check (unreleased — ships with the next release)
+### 2026-10-08 — launch-time update check (released in v0.7.3-mac2)
 
 Part of Manoj's all-apps decision: every app gets an in-app check against its own GitHub releases in its next release — no Sparkle, no extra servers.
 
@@ -45,7 +56,7 @@ Part of Manoj's all-apps decision: every app gets an in-app check against its ow
   - Stripped unused Qt frameworks/plugins (kept QtCore/Gui/Widgets + Network/DBus/PrintSupport/Svg/SvgWidgets)
   - `lipo -thin arm64` on 66 universal2 Mach-O files (Python is arm64-only → x86_64 slices were dead weight)
 - Wrapped all of it in a reproducible `build.sh` script.
-- Released **v0.7.3-mac1** (arm64) on GitHub.
+- Released **v0.7.3-mac1** (arm64) on GitHub; **v0.7.3-mac2** (bundled Python, update check, PR #1 polish) on 2026-10-09.
 - **macOS polish (PR #1, merged 2026-06-17):**
   - Committed 1024px macOS-style app icon at `assets/AppIcon.png` (rounded square + Smith-chart logo) — build.sh now builds `.icns` from it instead of upscaling the upstream 128px logo. Regenerate with `assets/make_icon.py` (Pillow).
   - Relaxed upstream's `setFixedHeight(20)` / `setFixedWidth(60)` on `SweepControl` / `MarkerControl` / `SerialControl` / `Marker/Widget.py` to minimums (24h, 80w / 72w) — macOS native control chrome was clipping text (`50kHz`→`50kH`, `Sweep`→`Sweer`, `Rescan`→`Rescar`, `Center`→`Cent`). Widened the left control column from 250→300px so the two-column Start/Stop|Center/Span forms fit.
@@ -58,9 +69,9 @@ Part of Manoj's all-apps decision: every app gets an in-app check against its ow
 |---|---|
 | Source repo | `~/projects/nanovnasaver-mac/` |
 | Remote | https://github.com/vu2cpl/nanovnasaver-mac (public) |
-| Latest release | `v0.7.3-mac1` — `NanoVNASaver-v0.7.3-mac1-arm64.zip` (85 MB zip, 253 MB extracted). HEAD also has the PR #1 macOS-polish changes and the update check (2026-10-08); release artifact has not been re-cut. |
-| Update check | `updater/update_check.py` → `Contents/Resources/update_check.py`, started by the launcher; prefs in `defaults` domain `org.nanovna.saver`; stamps only successful checks and skips dev builds since 2026-10-09 (unreleased) |
-| Built app | `/Applications/NanoVNASaver.app` — local build of `f5ce279` (bundled Python, update check), installed 2026-10-09 04:50 on Manoj's "install the new build in applications": 306 MB, `NVNASMacReleaseVersion` 0.7.3-mac1, not codesigned (neither was the copy it replaced, now in the Trash). Verified with /opt/homebrew + /usr/local hidden: NanoVNASaver/PySide6/numpy/ssl import, update check "current". Manoj opened it 2026-10-09: "works fine". (The "Check for updates" he saw in About is upstream's manual check of NanoVNA-Saver's own releases; ours runs silently at launch, no button.) |
+| Latest release | `v0.7.3-mac2` (2026-10-09, tag on `59a88d4`) — `NanoVNASaver-v0.7.3-mac2-arm64.zip` (108 MB zip, 306 MB extracted), SHA-256 `042d0dbc58dfc64b5908903f4293e1ab7025b7b3aed6c51dc88580d60f1e93af`. Ships PR #1 polish, the bundled Python and the update check. Previous: `v0.7.3-mac1` (85 MB zip, needs Homebrew python@3.12, no update check). |
+| Update check | `updater/update_check.py` → `Contents/Resources/update_check.py`, started by the launcher; prefs in `defaults` domain `org.nanovna.saver`; stamps only successful checks and skips dev builds (released in v0.7.3-mac2) |
+| Built app | `/Applications/NanoVNASaver.app` — the v0.7.3-mac2 release build (identical to the zip contents), installed 2026-10-09 05:07: 306 MB, `NVNASMacReleaseVersion` 0.7.3-mac2, not codesigned. Verified with /opt/homebrew + /usr/local hidden: NanoVNASaver/PySide6/numpy/ssl import, update check "current". The `f5ce279` build it replaced (which Manoj ran 2026-10-09: "works fine") is in the Trash as `NanoVNASaver.app-prev-20261009-050659`. (The "Check for updates" in About is upstream's manual check of NanoVNA-Saver's own releases; ours runs silently at launch, no button.) |
 | Logs | `~/Library/Logs/NanoVNASaver/nanovnasaver.log` |
 
 ## Three undocumented build quirks (wheel-install fixes)
@@ -75,8 +86,8 @@ Plus a fourth category of build-time patches for **macOS UI sizing** (see "What 
 
 ## TODO
 
-- [ ] **Next release** (`v0.7.3-mac2` or similar): build with the matching `MAC_REV` (required now), note the new update check in the release notes. Ships PR #1 polish, the bundled Python and the update check (with the 2026-10-09 follow-up).
-- [x] ~~**Not self-contained against Homebrew**~~ — DONE 2026-10-09: the app bundles its own Python (python-build-standalone 3.12.15), see "What changed". The released v0.7.3-mac1 zip still has the Homebrew symlink until the next release; the installed `/Applications` copy was replaced with a build of `f5ce279` on 2026-10-09.
+- [x] ~~**Next release**~~ — DONE 2026-10-09: `v0.7.3-mac2` (PR #1 polish, bundled Python, update check), installed in `/Applications`. Next one: `MAC_REV=mac3` on v0.7.3, or `mac1` on a new upstream tag.
+- [x] ~~**Not self-contained against Homebrew**~~ — DONE 2026-10-09: the app bundles its own Python (python-build-standalone 3.12.15), see "What changed"; released in v0.7.3-mac2 (the v0.7.3-mac1 zip still has the Homebrew symlink).
 - [ ] **Universal2 build** — install python.org universal2 Python 3.12, skip the lipo-thin step → single `.app` for both Intel + Apple Silicon
 - [ ] Proper Developer ID codesigning + notarization (kill the `xattr -dr com.apple.quarantine` step)
 - [ ] CI: GitHub Actions on `macos-14` + `macos-13` runners
