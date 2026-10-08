@@ -9,6 +9,7 @@ import json
 import os
 import plistlib
 import tempfile
+import time
 import unittest
 import urllib.error
 
@@ -106,6 +107,10 @@ class _Resp(io.BytesIO):
     status = 200
 
 
+class _Resp203(_Resp):
+    status = 203
+
+
 class Fetch(unittest.TestCase):
     def test_request_shape(self):
         seen = {}
@@ -123,6 +128,11 @@ class Fetch(unittest.TestCase):
             "Accept": "application/vnd.github+json",
             "User-agent": "nanovnasaver-mac/0.7.3-mac1",
         })
+
+    def test_non_200_is_a_failure(self):
+        body = json.dumps({"tag_name": "v0.7.3-mac1"}).encode()
+        with self.assertRaises(ValueError):
+            uc.fetch_latest("0.7.3-mac1", lambda req, timeout: _Resp203(body))
 
     def test_http_error_propagates_for_silent_handling(self):
         def opener(req, timeout):
@@ -147,41 +157,140 @@ class BundleVersion(unittest.TestCase):
             self.assertIsNone(uc.bundle_version(d))
 
 
-class RunSilentOnFailure(unittest.TestCase):
-    """run() must return 0 and show nothing when the network fails."""
+class _FakePrefs(uc.Prefs):
+    """In-memory stand-in for the app's defaults domain."""
 
-    def test_offline(self):
-        class P(uc.Prefs):
-            writes = []
+    store: dict = {}
+    writes: list = []
 
-            def read(self, key):
-                return None
+    def read(self, key):
+        v = self.store.get(key)
+        return None if v is None else str(v)
 
-            def write(self, key, kind, value):
-                self.writes.append(key)
+    def write(self, key, kind, value):
+        self.writes.append(key)
+        self.store[key] = value
 
-        def boom(*a, **k):
-            raise urllib.error.URLError("offline")
 
-        def no_dialog(*a, **k):
-            raise AssertionError("dialog shown on failure")
+class Run(unittest.TestCase):
+    """run() end to end with fake prefs, fetch and dialog: what is stamped when."""
 
-        saved = (uc.Prefs, uc.fetch_latest, uc.show_dialog)
-        uc.Prefs, uc.show_dialog = P, no_dialog
-        uc.fetch_latest = lambda current, opener=None: boom()
-        try:
-            with tempfile.TemporaryDirectory() as d:
-                with open(os.path.join(d, "Info.plist"), "wb") as f:
-                    plistlib.dump({uc.PLIST_VERSION_KEY: "0.7.3-mac1"}, f)
-                env = os.environ.pop(uc.TEST_ENV, None)
-                try:
-                    self.assertEqual(uc.main(["--contents", d]), 0)
-                finally:
-                    if env is not None:
-                        os.environ[uc.TEST_ENV] = env
-            self.assertEqual(P.writes, [uc.KEY_LAST_CHECK])  # attempt stamped, nothing else
-        finally:
-            uc.Prefs, uc.fetch_latest, uc.show_dialog = saved
+    def setUp(self):
+        _FakePrefs.store, _FakePrefs.writes = {}, []
+        self.fetches = 0
+        self.dialogs = []
+        self.result = ("v0.7.3-mac1", None)
+        self.saved = (uc.Prefs, uc.fetch_latest, uc.show_dialog, uc.SHOW_NOT_BEFORE)
+        self.env = os.environ.pop(uc.TEST_ENV, None)
+
+        def fetch(current, opener=None):
+            self.fetches += 1
+            if isinstance(self.result, BaseException):
+                raise self.result
+            return self.result
+
+        def dialog(tag, current, icon, give_up_after=None):
+            self.dialogs.append((tag, current))
+            return uc.BTN_LATER
+
+        uc.Prefs, uc.fetch_latest, uc.show_dialog, uc.SHOW_NOT_BEFORE = (
+            _FakePrefs, fetch, dialog, 0.0)
+
+    def tearDown(self):
+        uc.Prefs, uc.fetch_latest, uc.show_dialog, uc.SHOW_NOT_BEFORE = self.saved
+        os.environ.pop(uc.TEST_ENV, None)
+        if self.env is not None:
+            os.environ[uc.TEST_ENV] = self.env
+
+    def run_with(self, version="0.7.3-mac1", *extra):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "Info.plist"), "wb") as f:
+                plistlib.dump({uc.PLIST_VERSION_KEY: version}, f)
+            self.assertEqual(uc.main(["--contents", d, *extra]), 0)
+
+    # -- only a successful check is stamped
+
+    def test_success_current_stamps(self):
+        self.run_with()
+        self.assertEqual(self.fetches, 1)
+        self.assertEqual(_FakePrefs.writes, [uc.KEY_LAST_CHECK])
+        self.assertEqual(self.dialogs, [])
+        self.assertAlmostEqual(float(_FakePrefs.store[uc.KEY_LAST_CHECK]), time.time(), delta=5)
+
+    def test_success_newer_stamps_and_asks(self):
+        self.result = ("v0.7.3-mac2", None)
+        self.run_with()
+        self.assertEqual(_FakePrefs.writes, [uc.KEY_LAST_CHECK])  # Later saves nothing more
+        self.assertEqual(self.dialogs, [("v0.7.3-mac2", "0.7.3-mac1")])
+
+    def test_failures_stamp_nothing(self):
+        failures = (
+            urllib.error.URLError("offline"),
+            TimeoutError("timed out"),
+            urllib.error.HTTPError(uc.API_URL, 403, "rate limit exceeded", {}, None),
+            urllib.error.HTTPError(uc.API_URL, 500, "server error", {}, None),
+            ValueError("HTTP 203"),
+            ValueError("release JSON is not an object"),
+            json.JSONDecodeError("Expecting value", "<html>", 0),
+        )
+        for failure in failures:
+            with self.subTest(failure=repr(failure)):
+                _FakePrefs.store, _FakePrefs.writes = {}, []
+                self.result = failure
+                self.run_with()
+                self.assertEqual(_FakePrefs.writes, [])
+                self.assertEqual(self.dialogs, [])
+
+    def test_failure_keeps_the_last_success(self):
+        _FakePrefs.store[uc.KEY_LAST_CHECK] = "1000"  # long ago: due
+        self.result = urllib.error.URLError("offline")
+        self.run_with()
+        self.assertEqual(self.fetches, 1)
+        self.assertEqual(_FakePrefs.store[uc.KEY_LAST_CHECK], "1000")
+
+    def test_offline_launch_retries_at_next_launch(self):
+        self.result = urllib.error.URLError("offline")
+        self.run_with()
+        self.result = ("v0.7.3-mac1", None)
+        self.run_with()  # next launch, minutes later: not throttled
+        self.assertEqual(self.fetches, 2)
+        self.assertEqual(_FakePrefs.writes, [uc.KEY_LAST_CHECK])
+        self.run_with()  # and after that success, throttled for 24 h
+        self.assertEqual(self.fetches, 2)
+
+    def test_recent_success_throttles(self):
+        _FakePrefs.store[uc.KEY_LAST_CHECK] = f"{time.time() - 60:.0f}"
+        self.run_with()
+        self.assertEqual(self.fetches, 0)
+        self.assertEqual(_FakePrefs.writes, [])
+
+    # -- development builds
+
+    def test_dev_version_detection(self):
+        for v in ("0.7.4.dev1-mac1", "0.7.4-DEV-mac2", "development-mac1", "Dev"):
+            self.assertTrue(uc.is_dev_version(v), v)
+        for v in ("0.7.3-mac1", "", None):
+            self.assertFalse(uc.is_dev_version(v), v)
+
+    def test_dev_build_does_not_check(self):
+        for v in ("0.7.4.dev1-mac1", "0.7.4-DEV-mac2"):
+            with self.subTest(version=v):
+                self.run_with(v)
+                self.assertEqual(self.fetches, 0)
+                self.assertEqual(_FakePrefs.writes, [])
+
+    def test_test_hook_still_checks_a_dev_build(self):
+        os.environ[uc.TEST_ENV] = "0.0.1"
+        self.run_with("0.7.4.dev1-mac1")
+        self.assertEqual(self.fetches, 1)
+        self.assertEqual(self.dialogs, [("v0.7.3-mac1", "0.0.1")])
+        self.assertEqual(_FakePrefs.writes, [])  # test mode saves nothing
+
+    def test_dry_run_checks_a_dev_build_and_saves_nothing(self):
+        self.run_with("0.7.4.dev1-mac1", "--dry-run")
+        self.assertEqual(self.fetches, 1)
+        self.assertEqual(_FakePrefs.writes, [])
+        self.assertEqual(self.dialogs, [])
 
 
 if __name__ == "__main__":

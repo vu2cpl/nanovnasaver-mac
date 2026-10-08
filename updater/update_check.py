@@ -11,20 +11,27 @@ starts this script detached in the background, so it never delays the
 app. Every failure (offline, HTTP error, rate limit, bad JSON, missing
 plist key) is silent: one line in the app log, no dialog.
 
+Only a successful check -- HTTP 200 and JSON with a usable tag_name,
+newer or not -- stamps UpdateLastCheck, so the next check is 24 h after
+it. A failed one stamps nothing, so the next launch simply tries again.
+A development build (release version containing "dev", any case) never
+checks by itself. (Manoj's decisions, 2026-10-09.)
+
 Upstream NanoVNASaver's own "Check for updates" button (About window)
 is left as it is: it only runs on demand and looks at the upstream
 repo's tags, which carry no macOS build.
 
 Preferences (macOS defaults, domain = the bundle identifier):
   CheckForUpdates       bool    default true; false turns the check off
-  UpdateLastCheck       float   epoch seconds of the last attempt
+  UpdateLastCheck       float   epoch seconds of the last successful check
   UpdateSkippedVersion  string  release tag the user chose to skip
 
   defaults write org.nanovna.saver CheckForUpdates -bool false
 
 Test hook (inert unless set): NVNAS_UPDATE_TEST_VERSION=0.0.1 makes the
-check pretend to be that version, ignores the 24 h throttle and the
-skipped version, and writes no preferences. The off switch still wins.
+check pretend to be that version, ignores the 24 h throttle, the
+skipped version and the development-build skip, and writes no
+preferences. The off switch still wins.
 
 Uses only the Python standard library plus /usr/bin/defaults,
 /usr/bin/osascript and /usr/bin/open.
@@ -50,7 +57,7 @@ REPO = "vu2cpl/nanovnasaver-mac"
 API_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
 RELEASES_URL = f"https://github.com/{REPO}/releases"
 HTTP_TIMEOUT = 10  # seconds
-CHECK_INTERVAL = 24 * 60 * 60  # at most one check per 24 h
+CHECK_INTERVAL = 24 * 60 * 60  # next check 24 h after the last successful one
 SHOW_NOT_BEFORE = 10.0  # seconds after launch: the app window is up, the dialog lands on top
 MAX_BODY = 1_000_000  # bytes read from the API response
 
@@ -104,8 +111,13 @@ def is_newer(latest: str, current: str) -> bool:
     return compare_versions(latest, current) > 0
 
 
+def is_dev_version(version: Optional[str]) -> bool:
+    """True for a development build: the release version contains "dev" (any case)."""
+    return "dev" in (version or "").lower()
+
+
 def check_due(now: float, last: Optional[float], interval: float = CHECK_INTERVAL) -> bool:
-    """True when no check has run within `interval` seconds.
+    """True when no check has succeeded within `interval` seconds.
 
     A last-check time in the future (clock moved back) counts as due.
     """
@@ -296,17 +308,22 @@ def run(args: argparse.Namespace) -> int:
     if test_mode:
         log(f"TEST MODE: pretending to be {current} (real {real_version}); no prefs written")
 
-    now = time.time()
-    if not (test_mode or args.dry_run):
-        if not check_due(now, prefs.last_check()):
-            return 0
-        prefs.set_last_check(now)  # stamp the attempt: at most one request per 24 h
+    automatic = not (test_mode or args.dry_run)
+    if automatic and is_dev_version(real_version):
+        log(f"{real_version} is a development build; not checking")
+        return 0
+    if automatic and not check_due(time.time(), prefs.last_check()):
+        return 0
 
     try:
         tag, html = fetch_latest(real_version)
     except Exception as e:  # offline, HTTP error, rate limit, bad JSON: all silent
-        log(f"check failed ({type(e).__name__}: {e})")
+        log(f"check failed ({type(e).__name__}: {e}); trying again at the next launch")
         return 0
+    if automatic:
+        # Only a successful check is stamped (HTTP 200 + usable tag_name), so a
+        # launch while offline or rate-limited is retried at the next launch.
+        prefs.set_last_check(time.time())
 
     skipped = None if (test_mode or args.dry_run) else prefs.skipped()
     verdict = decide(tag, current, skipped)

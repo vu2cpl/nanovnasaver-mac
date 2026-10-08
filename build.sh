@@ -12,13 +12,14 @@
 # Mac without Homebrew. (Until 2026-10-09 the bundle was a venv whose python3.12
 # was a symlink to Homebrew's python@3.12 -- no Homebrew, no app.)
 #
-# Usage:  [MAC_REV=macN] ./build.sh [version-tag] [destination]
-# e.g.:   ./build.sh v0.7.3 ~/Applications/NanoVNASaver.app
+# Usage:  MAC_REV=macN ./build.sh [version-tag] [destination]
+# e.g.:   MAC_REV=mac2 ./build.sh v0.7.3 ~/Applications/NanoVNASaver.app
 #
-# MAC_REV is this repo's packaging revision on top of the upstream tag; the
-# bundle's release version is "<tag without v>-<MAC_REV>" (e.g. 0.7.3-mac1)
-# and MUST match the GitHub release tag it ships as (v0.7.3-mac1), because the
-# launch-time update check compares the two.
+# MAC_REV is required (there is no default -- the script stops before doing
+# anything without it). It is this repo's packaging revision on top of the
+# upstream tag; the bundle's release version is "<tag without v>-<MAC_REV>"
+# (e.g. 0.7.3-mac2) and MUST match the GitHub release tag it ships as
+# (v0.7.3-mac2), because the launch-time update check compares the two.
 #
 # Copyright (C) 2026 Manoj Kumar R <vu2cpl@gmail.com>
 # SPDX-License-Identifier: GPL-3.0-or-later
@@ -29,7 +30,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TAG="${1:-v0.7.3}"
 APP="${2:-$HOME/Applications/NanoVNASaver.app}"
-MAC_REV="${MAC_REV:-mac1}"
+MAC_REV="${MAC_REV:-}"
+
+# No default packaging revision: a silent "mac1" would build a bundle whose
+# release version does not match the release it ships as, and every user would
+# be told about an update to the version they already run.
+if [ -z "$MAC_REV" ]; then
+    echo "ERROR: MAC_REV is not set. Give this build's packaging revision; it must" >&2
+    echo "       match the GitHub release tag the build ships as, e.g. for v0.7.3-mac2:" >&2
+    echo "" >&2
+    echo "           MAC_REV=mac2 ./build.sh v0.7.3" >&2
+    exit 1
+fi
 
 # Bundled Python (python-build-standalone). To move to a newer one, change the
 # three values together; the SHA-256 is the release's SHA256SUMS line.

@@ -5,14 +5,16 @@
 ## Usage
 
 ```bash
-./build.sh                 # builds v0.7.3 → ~/Applications/NanoVNASaver.app
-./build.sh v0.7.3          # explicit version
-./build.sh v0.7.3 /Applications/NanoVNASaver.app   # custom destination
+MAC_REV=mac2 ./build.sh                 # builds v0.7.3 → ~/Applications/NanoVNASaver.app (release version 0.7.3-mac2)
+MAC_REV=mac2 ./build.sh v0.7.3          # explicit version
+MAC_REV=mac2 ./build.sh v0.7.3 /Applications/NanoVNASaver.app   # custom destination
 ```
+
+`MAC_REV` is required — see below.
 
 Needs `git`, `curl` and the Xcode command-line tools (`lipo`, `otool`, `sips`, `iconutil`) — no Homebrew and no installed Python. The build downloads a pinned relocatable CPython (3.12.15 from Astral's [python-build-standalone](https://github.com/astral-sh/python-build-standalone), ~24 MB) once, checks its SHA-256 against the value in `build.sh`, caches it in `~/Library/Caches/nanovnasaver-mac` (override with `NVNAS_CACHE=...`) and bundles it. Apple Silicon assumed — the `lipo` thinning step is skipped on Intel.
 
-The bundle carries a **release version** = upstream tag + this repo's packaging revision, e.g. `0.7.3-mac1` (Info.plist key `NVNASMacReleaseVersion`). The revision comes from `MAC_REV` (default `mac1`) and must match the GitHub release tag the build is published as, because the update check compares the two:
+The bundle carries a **release version** = upstream tag + this repo's packaging revision, e.g. `0.7.3-mac2` (Info.plist key `NVNASMacReleaseVersion`). The revision comes from `MAC_REV` (`mac1`, `mac2`, …), which has **no default**: without it `build.sh` prints an error with an example and exits before doing any work or downloads. It must match the GitHub release tag the build is published as, because the update check compares the two — a mismatch would tell every user about an "update" to the version they already run:
 
 ```bash
 MAC_REV=mac2 ./build.sh v0.7.3     # bundle for release tag v0.7.3-mac2
@@ -58,7 +60,7 @@ At launch, at most once every 24 hours, the app asks GitHub for the latest relea
 - **Skip This Version** hides that release; you are asked again only when a newer one appears.
 - **Later** (or Esc) asks again after the next 24 h.
 
-The check runs in a separate background process started by the launcher, so it never delays the app, and it is silent on any failure (offline, rate-limited, GitHub error) apart from one line in `~/Library/Logs/NanoVNASaver/nanovnasaver.log`.
+The check runs in a separate background process started by the launcher, so it never delays the app, and it is silent on any failure (offline, rate-limited, GitHub error) apart from one line in `~/Library/Logs/NanoVNASaver/nanovnasaver.log`. The 24 hours count from the last check that got an answer (HTTP 200 with a release tag): a launch while offline or rate-limited saves nothing, so the next launch simply tries again. A development build (release version containing `dev`) never checks by itself.
 
 Turn it off (or back on):
 
@@ -67,17 +69,17 @@ defaults write org.nanovna.saver CheckForUpdates -bool false
 defaults delete org.nanovna.saver CheckForUpdates     # back to the default (on)
 ```
 
-Other keys in the same domain: `UpdateLastCheck` (time of the last check) and `UpdateSkippedVersion` (the skipped release tag); `defaults delete org.nanovna.saver` resets all three. Upstream NanoVNA-Saver keeps its own settings in `~/.config/NanoVNASaver/` and is not affected.
+Other keys in the same domain: `UpdateLastCheck` (time of the last successful check) and `UpdateSkippedVersion` (the skipped release tag); `defaults delete org.nanovna.saver` resets all three. Upstream NanoVNA-Saver keeps its own settings in `~/.config/NanoVNASaver/` and is not affected.
 
 Upstream's own **About → Check for updates** button is unchanged: it runs only when clicked and looks at the upstream repo's tags, which are the Python releases, not this Mac build.
 
 For developers:
 
 ```bash
-python3 -m unittest discover -s updater            # unit tests (version compare, throttle, parsing, failure path)
+python3 -m unittest discover -s updater            # unit tests (version compare, throttle, parsing, what gets stamped, dev skip)
 # live check, prints the verdict, no dialog, nothing saved (point --contents at a built bundle):
 python3 updater/update_check.py --contents /Applications/NanoVNASaver.app/Contents --dry-run
-# show the dialog once: pretend to be 0.0.1 (ignores the 24 h limit and the skip, saves nothing)
+# show the dialog once: pretend to be 0.0.1 (ignores the 24 h limit, the skip and a dev build, saves nothing)
 NVNAS_UPDATE_TEST_VERSION=0.0.1 python3 updater/update_check.py --contents /Applications/NanoVNASaver.app/Contents
 ```
 
