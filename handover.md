@@ -50,7 +50,7 @@ Part of Manoj's all-apps decision: every app gets an in-app check against its ow
 | Remote | https://github.com/vu2cpl/nanovnasaver-mac (public) |
 | Latest release | `v0.7.3-mac1` — `NanoVNASaver-v0.7.3-mac1-arm64.zip` (85 MB zip, 253 MB extracted). HEAD also has the PR #1 macOS-polish changes and the update check (2026-10-08); release artifact has not been re-cut. |
 | Update check | `updater/update_check.py` → `Contents/Resources/update_check.py`, started by the launcher; prefs in `defaults` domain `org.nanovna.saver` |
-| Built app | `/Applications/NanoVNASaver.app` (ad-hoc codesigned, native arm64) |
+| Built app | `/Applications/NanoVNASaver.app` — local build of `f5ce279` (bundled Python, update check), installed 2026-10-09 04:50 on Manoj's "install the new build in applications": 306 MB, `NVNASMacReleaseVersion` 0.7.3-mac1, not codesigned (neither was the copy it replaced, now in the Trash). Verified with /opt/homebrew + /usr/local hidden: NanoVNASaver/PySide6/numpy/ssl import, update check "current". |
 | Logs | `~/Library/Logs/NanoVNASaver/nanovnasaver.log` |
 
 ## Three undocumented build quirks (wheel-install fixes)
@@ -66,7 +66,7 @@ Plus a fourth category of build-time patches for **macOS UI sizing** (see "What 
 ## TODO
 
 - [ ] **Next release** (`v0.7.3-mac2` or similar): build with the matching `MAC_REV`, note the new update check in the release notes. Ships PR #1 polish + the update check.
-- [x] ~~**Not self-contained against Homebrew**~~ — DONE 2026-10-09: the app bundles its own Python (python-build-standalone 3.12.15), see "What changed". The released v0.7.3-mac1 and the installed `/Applications/NanoVNASaver.app` still have the Homebrew symlink until the next release is built and installed.
+- [x] ~~**Not self-contained against Homebrew**~~ — DONE 2026-10-09: the app bundles its own Python (python-build-standalone 3.12.15), see "What changed". The released v0.7.3-mac1 zip still has the Homebrew symlink until the next release; the installed `/Applications` copy was replaced with a build of `f5ce279` on 2026-10-09.
 - [ ] **Universal2 build** — install python.org universal2 Python 3.12, skip the lipo-thin step → single `.app` for both Intel + Apple Silicon
 - [ ] Proper Developer ID codesigning + notarization (kill the `xattr -dr com.apple.quarantine` step)
 - [ ] CI: GitHub Actions on `macos-14` + `macos-13` runners
