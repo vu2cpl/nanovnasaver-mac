@@ -215,7 +215,10 @@ class Prefs:
             return None
 
     def set_last_check(self, when: float) -> None:
-        self.write(KEY_LAST_CHECK, "-float", f"{when:.0f}")
+        # Whole seconds, rounded DOWN: rounding up could put the stamp up to
+        # 0.5 s in the future, which check_due reads as a clock that went back
+        # (= due), so a relaunch within that half second would check again.
+        self.write(KEY_LAST_CHECK, "-float", str(int(when)))
 
     def skipped(self) -> Optional[str]:
         return self.read(KEY_SKIPPED) or None

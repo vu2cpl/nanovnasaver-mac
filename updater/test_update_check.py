@@ -258,6 +258,12 @@ class Run(unittest.TestCase):
         self.run_with()  # and after that success, throttled for 24 h
         self.assertEqual(self.fetches, 2)
 
+    def test_stamp_is_never_in_the_future(self):
+        p = _FakePrefs()
+        p.set_last_check(1000.9)
+        self.assertEqual(p.last_check(), 1000.0)
+        self.assertFalse(uc.check_due(1000.95, p.last_check()))
+
     def test_recent_success_throttles(self):
         _FakePrefs.store[uc.KEY_LAST_CHECK] = f"{time.time() - 60:.0f}"
         self.run_with()
